@@ -1,65 +1,60 @@
 # tapis-postgres-backup
 
-Backup and restore tooling for Upstream Postgres pods managed in Tapis Pods.
+Backs up Upstream Postgres pods into Tapis Files storage and restores those backups into a Tapis-hosted Postgres pod.
 
-Backups are:
+The project supports three main workflows:
 
-- created as nightly logical PostgreSQL dumps
-- uploaded to the Tapis Files system `ptdatax.project.PTDATAX-284`
-- stored under the Corral-backed root `/corral-repl/tacc/aci/PT2050/projects/PTDATAX-284`
-- retained for 7 daily restore points per pod
+- `backup-once`: discover eligible Postgres pods and create a backup immediately
+- `backup-loop`: run the same backup job on a fixed interval
+- `restore`: download a backup set and restore it into a target Postgres pod
 
-Restores are:
+## What gets backed up
 
-- manual but scripted
-- restored back into Tapis Postgres pods
-- resolved against live Tapis pod metadata for credentials
+The backup job discovers pods that look like Upstream Postgres pods:
 
-## Files
+- pod id ends with `postgres`
+- description is `postgres for upstream-docker` when present
+- a Tapis volume is mounted at `/var/lib/postgresql/data`
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are present
+- the mounted volume id matches the expected `postgres -> volume` name pattern
 
-- Backup script: `tapis_postgres_backup.py`
-- Restore script: `tapis_postgres_restore.py`
-- Shared library: `backup.py`
-- Tests: `test_backup.py`
+For each matching pod, the job creates:
 
-## Prerequisites
+- a custom-format `pg_dump` archive
+- a `pg_dumpall --globals-only` SQL file
+- `checksums.txt`
+- `manifest.json`
 
-The machine running the scripts needs:
+Backups are uploaded to the configured Tapis Files system under:
 
-- a Python environment with the dependencies from [`requirements.txt`](/Users/wmobley/Documents/GitHub/upstream/tapis-postgres-backup/requirements.txt)
-- `pg_dump`
-- `pg_dumpall`
-- `pg_restore`
-- `psql`
-- network access to the Tapis API and the Tapis Postgres pod endpoints
-
-The scripts read environment variables from a local `.env` file in this directory:
-
-- [`.env`](.env)
-- start from [`.env.example`](/Users/wmobley/Documents/GitHub/upstream/tapis-postgres-backup/.env.example)
-
-## Python Environment Setup
-
-Create a dedicated virtualenv inside `tapis-postgres-backup`:
-
-```bash
-cd /path/to/upstream/tapis-postgres-backup
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+```text
+<TAPIS_BACKUP_ROOT_PATH>/<pod_id>/YYYY/MM/DD/
 ```
 
-This is the recommended setup for both local testing and VM installation on `upstream-dso`.
+An inventory file for each run is also uploaded under:
 
-After that, run the backup tools with:
-
-```bash
-.venv/bin/python tapis_postgres_backup.py --log-level INFO
+```text
+<TAPIS_BACKUP_ROOT_PATH>/_inventory/YYYY/MM/DD/
 ```
 
-## Required Configuration
+Retention is enforced per pod by date directory. By default, the newest 7 daily backups are kept.
 
-Minimum useful values in [`.env`](.env):
+## Requirements
+
+- Python 3.11+
+- PostgreSQL client tools available on `PATH`: `pg_dump`, `pg_dumpall`, `pg_restore`, `psql`
+- network access to the Tapis API and the target Postgres pods
+- a Tapis token or service credentials with permission to list and inspect pods
+- permission to create directories and upload/download files in the backup system
+- permission to create pods and volumes if you use restore without `--reuse-existing-pod`
+
+The provided `Dockerfile` installs PostgreSQL 17 client tools and runs `runner.py` by default.
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in the values you actually use.
+
+Core settings:
 
 ```env
 TAPIS_BASE_URL=https://portals.tapis.io
@@ -74,299 +69,153 @@ TAPIS_BACKUP_RETENTION_DAYS=7
 TAPIS_BACKUP_STAGING_DIR=/tmp/upstream-postgres-backups
 TAPIS_BACKUP_TIMEOUT_SECONDS=300
 
-DEFAULT_ADMIN_USERS=["wmobley","YOUR_SERVICE_ACCOUNT_USERNAME"]
+TAPIS_POSTGRES_BACKUP_MODE=backup-once
+TAPIS_POSTGRES_BACKUP_INTERVAL_SECONDS=86400
+TAPIS_POSTGRES_BACKUP_RUN_IMMEDIATELY=true
+TAPIS_POSTGRES_BACKUP_LOG_LEVEL=INFO
 ```
 
-You can also pass `--token` directly to the scripts instead of using service credentials, but the service-account flow is the intended production path.
+Authentication can be supplied in either of these ways:
 
-## Docker Image
+- set `TAPIS_SERVICE_USERNAME` and `TAPIS_SERVICE_PASSWORD`
+- pass `--token` to the backup or restore command
 
-Build the image:
+`TAPIS_PODS_BASE_URL` is optional. If unset, the code falls back to `TAPIS_BASE_URL`.
+
+## Local Development
+
+Create a virtual environment and install dependencies:
 
 ```bash
-cd /path/to/upstream/tapis-postgres-backup
-docker build -t tapis-postgres-backup:latest .
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Run one backup:
+Run the unit tests:
 
 ```bash
-docker run --rm \
-  --env-file /path/to/upstream/tapis-postgres-backup/.env \
-  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
-  tapis-postgres-backup:latest
+python -m pytest test_backup.py
 ```
 
-Run the long-lived backup loop:
+## Backup Commands
+
+Run a single backup pass:
 
 ```bash
-docker run --rm \
-  --env-file /path/to/upstream/tapis-postgres-backup/.env \
-  -e TAPIS_POSTGRES_BACKUP_MODE=backup-loop \
-  -e TAPIS_POSTGRES_BACKUP_INTERVAL_SECONDS=86400 \
-  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
-  tapis-postgres-backup:latest
+python tapis_postgres_backup.py --log-level INFO
 ```
 
-Run a restore:
+Run with an explicit token:
 
 ```bash
-docker run --rm \
-  --env-file /path/to/upstream/tapis-postgres-backup/.env \
-  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
-  tapis-postgres-backup:latest \
-  python runner.py --mode restore -- --pod-id fluxpostgres --backup-date 2026-04-10 --target-pod-id fluxrestorepostgres
+python tapis_postgres_backup.py --token "$TAPIS_TOKEN"
 ```
 
-Relevant image environment variables:
-
-- `TAPIS_BASE_URL`
-- `TAPIS_TENANT_ID`
-- `TAPIS_SERVICE_USERNAME`
-- `TAPIS_SERVICE_PASSWORD`
-- `TAPIS_BACKUP_SYSTEM_ID`
-- `TAPIS_BACKUP_ROOT_PATH`
-- `TAPIS_BACKUP_RETENTION_DAYS`
-- `TAPIS_BACKUP_STAGING_DIR`
-- `TAPIS_BACKUP_TIMEOUT_SECONDS`
-- `TAPIS_POSTGRES_BACKUP_MODE`
-- `TAPIS_POSTGRES_BACKUP_INTERVAL_SECONDS`
-- `TAPIS_POSTGRES_BACKUP_RUN_IMMEDIATELY`
-- `TAPIS_POSTGRES_BACKUP_LOG_LEVEL`
-
-The image installs PostgreSQL 17 client tools so `pg_dump` and `pg_restore` match the current Upstream Postgres server major version.
-
-## One-Shot Actor Test
-
-Use `test_actor_once.py` to validate that the published image works as a Tapis Actor before enabling cron.
-
-Additional `.env` values for the actor smoke test:
-
-```env
-ACTOR_TEST_TOKEN=YOUR_OWNER_OR_EXECUTOR_TOKEN
-ACTOR_TEST_IMAGE=ghcr.io/YOUR_ORG/YOUR_IMAGE:latest
-ACTOR_TEST_BASE_URL=https://portals.tapis.io
-ACTOR_TEST_TIMEOUT_SECONDS=600
-ACTOR_TEST_NAME_PREFIX=tapis-postgres-backup-smoke
-ACTOR_TEST_CLEANUP=true
-```
-
-Run it:
+Run through the container entrypoint:
 
 ```bash
-cd /path/to/upstream/tapis-postgres-backup
-.venv/bin/python test_actor_once.py
+python runner.py --mode backup-once
 ```
 
-The script will:
-
-- create a temporary actor from `ACTOR_TEST_IMAGE`
-- wait for the actor to become `READY`
-- send one manual execution message
-- poll the execution until completion or failure
-- print execution details and logs
-- delete the actor by default when the test finishes
-
-Set `ACTOR_TEST_CLEANUP=false` if you want to keep the actor around for debugging after the run.
-
-## Initial Setup
-
-### 1. Create the backup directory on the Tapis Files system
-
-Use an owner token for the system:
+Continuous backup loop:
 
 ```bash
-OWNER_JWT='YOUR_OWNER_TOKEN'
-
-curl -X POST \
-  -H "X-Tapis-Token: ${OWNER_JWT}" \
-  -H "Content-Type: application/json" \
-  https://portals.tapis.io/v3/files/ops/ptdatax.project.PTDATAX-284 \
-  -d '{"path":"/upstream-postgres"}'
+python runner.py --mode backup-loop
 ```
 
-### 2. Grant file-path write permission to the system account
+The backup command prints a JSON summary and returns a non-zero exit code if any target fails.
 
-Set the target account name once:
+## Restore Commands
+
+Restore the latest available backup for a pod into a fresh target pod and volume:
 
 ```bash
-SERVICE_ACCOUNT='YOUR_SERVICE_ACCOUNT_USERNAME'
+python tapis_postgres_restore.py \
+  --pod-id weatherpostgres \
+  --target-pod-id weatherpostgres-restore
 ```
+
+Restore a specific backup date:
 
 ```bash
-curl -X POST \
-  -H "X-Tapis-Token: ${OWNER_JWT}" \
-  -H "Content-Type: application/json" \
-  https://portals.tapis.io/v3/files/permissions/ptdatax.project.PTDATAX-284/upstream-postgres \
-  -d "{\"username\":\"${SERVICE_ACCOUNT}\",\"permission\":\"MODIFY\"}"
-```
-
-Verify:
-
-```bash
-curl \
-  -H "X-Tapis-Token: ${OWNER_JWT}" \
-  "https://portals.tapis.io/v3/files/permissions/ptdatax.project.PTDATAX-284/upstream-postgres?username=${SERVICE_ACCOUNT}"
-```
-
-### 3. Grant system read/modify permission to the system account
-
-```bash
-curl -X POST \
-  -H "X-Tapis-Token: ${OWNER_JWT}" \
-  -H "Content-Type: application/json" \
-  "https://portals.tapis.io/v3/systems/perms/ptdatax.project.PTDATAX-284/user/${SERVICE_ACCOUNT}" \
-  -d '{"permissions":["READ","MODIFY"]}'
-```
-
-Verify:
-
-```bash
-curl \
-  -H "X-Tapis-Token: ${OWNER_JWT}" \
-  "https://portals.tapis.io/v3/systems/perms/ptdatax.project.PTDATAX-284/user/${SERVICE_ACCOUNT}"
-```
-
-### 4. Grant Pod and Volume admin to the system account on existing bundles
-
-For the current Upstream bundles:
-
-```bash
-OWNER_JWT='YOUR_OWNER_TOKEN'
-SERVICE_ACCOUNT='YOUR_SERVICE_ACCOUNT_USERNAME'
-
-for base in flux upstream vital
-do
-  for pod_id in "${base}postgres" "${base}api" "${base}"
-  do
-    curl -sS -X POST \
-      -H "X-Tapis-Token: ${OWNER_JWT}" \
-      -H "Content-Type: application/json" \
-      "https://portals.tapis.io/v3/pods/${pod_id}/permissions" \
-      -d "{\"user\":\"${SERVICE_ACCOUNT}\",\"level\":\"ADMIN\"}"
-    echo
-  done
-
-  curl -sS -X POST \
-    -H "X-Tapis-Token: ${OWNER_JWT}" \
-    -H "Content-Type: application/json" \
-    "https://portals.tapis.io/v3/pods/volumes/${base}volume/permissions" \
-    -d "{\"user\":\"${SERVICE_ACCOUNT}\",\"level\":\"ADMIN\"}"
-  echo
-done
-```
-
-New bundles created through Upstream now grant `ADMIN` to the configured system account automatically when it is included in `DEFAULT_ADMIN_USERS`.
-
-## Running a Backup
-
-From the `tapis-postgres-backup` directory:
-
-```bash
-cd /path/to/upstream/tapis-postgres-backup
-.venv/bin/python tapis_postgres_backup.py --log-level INFO
-```
-
-For a more verbose first run:
-
-```bash
-.venv/bin/python tapis_postgres_backup.py --log-level DEBUG
-```
-
-The backup job:
-
-- lists Tapis Pods visible to the caller
-- filters for Upstream Postgres pods
-- runs `pg_dump` and `pg_dumpall --globals-only`
-- validates the dump with `pg_restore --list`
-- uploads to `tapis://ptdatax.project.PTDATAX-284/upstream-postgres/...`
-- prunes to the newest 7 daily restore points per pod
-- uploads an inventory summary under `/_inventory/YYYY/MM/DD/`
-
-## Remote Backup Layout
-
-Each pod backup is stored as:
-
-```text
-/upstream-postgres/<pod_id>/YYYY/MM/DD/<pod_id>.dump
-/upstream-postgres/<pod_id>/YYYY/MM/DD/<pod_id>-globals.sql
-/upstream-postgres/<pod_id>/YYYY/MM/DD/checksums.txt
-/upstream-postgres/<pod_id>/YYYY/MM/DD/manifest.json
-```
-
-Nightly inventory summaries are stored as:
-
-```text
-/upstream-postgres/_inventory/YYYY/MM/DD/inventory-HHMMSS.json
-```
-
-## Running a Restore
-
-Restore the latest-good backup into the original pod id:
-
-```bash
-cd /path/to/upstream/tapis-postgres-backup
-.venv/bin/python tapis_postgres_restore.py --pod-id fluxpostgres
-```
-
-Restore a specific date into a new target pod:
-
-```bash
-.venv/bin/python tapis_postgres_restore.py \
-  --pod-id fluxpostgres \
+python tapis_postgres_restore.py \
+  --pod-id weatherpostgres \
   --backup-date 2026-04-10 \
-  --target-pod-id fluxrestorepostgres \
-  --log-level DEBUG
+  --target-pod-id weatherpostgres-restore
 ```
 
 Restore into an already-running pod:
 
 ```bash
-.venv/bin/python tapis_postgres_restore.py \
-  --pod-id fluxpostgres \
-  --backup-date 2026-04-10 \
-  --target-pod-id fluxpostgres \
+python tapis_postgres_restore.py \
+  --pod-id weatherpostgres \
+  --target-pod-id weatherpostgres-restore \
   --reuse-existing-pod
 ```
 
-The restore script:
-
-- downloads the selected dump, globals file, and manifest
-- reads non-secret backup metadata from the manifest
-- resolves live credentials from Tapis for the relevant pod
-- creates the replacement volume and pod unless `--reuse-existing-pod` is set
-- waits for the target database to become reachable
-- applies globals unless `--skip-globals` is used
-- restores the custom-format dump with `pg_restore`
-- prints the `DATABASE_URL` you should use if the API pod must be repointed
-
-## Scheduling
-
-Example cron entry:
-
-```cron
-15 2 * * * cd /path/to/upstream/tapis-postgres-backup && /path/to/upstream/tapis-postgres-backup/.venv/bin/python tapis_postgres_backup.py >> /var/log/upstream-postgres-backup.log 2>&1
-```
-
-## Testing
-
-Run the local tests:
+Skip applying `globals.sql` before `pg_restore`:
 
 ```bash
-cd /path/to/upstream
-tapis-postgres-backup/.venv/bin/python -m pytest tapis-postgres-backup/test_backup.py upstream-docker-pods/tests/core/test_config.py -q
+python tapis_postgres_restore.py \
+  --pod-id weatherpostgres \
+  --target-pod-id weatherpostgres-restore \
+  --skip-globals
 ```
 
-Safe operational validation:
+Restore behavior:
 
-1. Run one real backup against non-production pods.
-2. Confirm files landed under `/upstream-postgres/...`.
-3. Restore one backup into a fresh test pod id.
-4. Verify representative table counts and API reads.
+- if `--backup-date` is omitted, the newest available backup date is used
+- if `--reuse-existing-pod` is not set, the tool creates the target volume and pod
+- the restored database connection details are printed as JSON at the end
+- the tool does not update any API pod configuration for you
 
-## Security Notes
+## Docker
 
-- New `manifest.json` files do not store `db_user` or `db_password`.
-- Backup JSON summaries and actor logs no longer print `db_user` or `db_password`.
-- Restore resolves credentials from live Tapis pod metadata instead of trusting backup metadata.
-- Older backups created before this change may still contain plaintext credentials in `manifest.json`. Remove or replace those older manifests if they are still present in Tapis Files.
+Build the image:
+
+```bash
+docker build -t tapis-postgres-backup .
+```
+
+Run a one-shot backup in Docker:
+
+```bash
+docker run --rm --env-file .env tapis-postgres-backup python runner.py --mode backup-once
+```
+
+Run restore in Docker:
+
+```bash
+docker run --rm --env-file .env tapis-postgres-backup \
+  python runner.py --mode restore -- --pod-id weatherpostgres --target-pod-id weatherpostgres-restore
+```
+
+## Tapis Actor Helpers
+
+Two helper scripts are included for actor-based execution:
+
+- `test_actor_once.py`: creates a temporary one-shot actor, runs one execution, prints logs, and optionally deletes the actor
+- `schedule_actor.py`: creates or updates a cron-based actor for recurring backups
+
+Smoke test a one-shot actor:
+
+```bash
+python test_actor_once.py
+```
+
+Create or update a scheduled actor:
+
+```bash
+python schedule_actor.py \
+  --image ghcr.io/YOUR_ORG/YOUR_IMAGE:latest \
+  --cron-schedule "2026-04-11 00 + 1 day"
+```
+
+The actor helpers expect the `ACTOR_*` variables shown in `.env.example`.
+
+## Notes
+
+- backup manifests intentionally omit database credentials
+- restore resolves live database credentials from the source or target pod definition
+- the code assumes pod hosts are reachable as `<pod_id>.pods.tacc.tapis.io` when not explicitly provided by the API
