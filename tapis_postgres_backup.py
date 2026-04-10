@@ -6,18 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
-TOOLS_ROOT = Path(__file__).resolve().parent
-UPSTREAM_DOCKER_PODS_ROOT = TOOLS_ROOT.parent / "upstream-docker-pods"
-if str(TOOLS_ROOT) not in sys.path:
-    sys.path.insert(0, str(TOOLS_ROOT))
-if str(UPSTREAM_DOCKER_PODS_ROOT) not in sys.path:
-    sys.path.insert(0, str(UPSTREAM_DOCKER_PODS_ROOT))
-
 from backup import BackupManager, TapisBackupClient, resolve_tapis_token
-from app.core.config import get_settings
+from config import get_settings
 
 
 def parse_args() -> argparse.Namespace:

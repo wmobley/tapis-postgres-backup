@@ -3,3 +3,4 @@ tapipy==1.8.5
 python-dotenv==1.0.1
 pydantic-settings
 psycopg[binary]==3.2.3
+pydantic>=2.0.0

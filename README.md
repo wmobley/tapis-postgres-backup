@@ -33,9 +33,10 @@ The machine running the scripts needs:
 - `psql`
 - network access to the Tapis API and the Tapis Postgres pod endpoints
 
-The scripts use the existing Upstream settings loader from [`upstream-docker-pods/app/core/config.py`](/Users/wmobley/Documents/GitHub/upstream/upstream-docker-pods/app/core/config.py), so the `.env` file lives in:
+The scripts read environment variables from a local `.env` file in this directory:
 
-- [`upstream-docker-pods/.env`](/Users/wmobley/Documents/GitHub/upstream/upstream-docker-pods/.env)
+- [`.env`](.env)
+- start from [`.env.example`](/Users/wmobley/Documents/GitHub/upstream/tapis-postgres-backup/.env.example)
 
 ## Python Environment Setup
 
@@ -58,7 +59,7 @@ After that, run the backup tools with:
 
 ## Required Configuration
 
-Minimum useful values in [`upstream-docker-pods/.env`](/Users/wmobley/Documents/GitHub/upstream/upstream-docker-pods/.env):
+Minimum useful values in [`.env`](.env):
 
 ```env
 TAPIS_BASE_URL=https://portals.tapis.io
@@ -77,6 +78,61 @@ DEFAULT_ADMIN_USERS=["wmobley","YOUR_SERVICE_ACCOUNT_USERNAME"]
 ```
 
 You can also pass `--token` directly to the scripts instead of using service credentials, but the service-account flow is the intended production path.
+
+## Docker Image
+
+Build the image:
+
+```bash
+cd /path/to/upstream/tapis-postgres-backup
+docker build -t tapis-postgres-backup:latest .
+```
+
+Run one backup:
+
+```bash
+docker run --rm \
+  --env-file /path/to/upstream/tapis-postgres-backup/.env \
+  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
+  tapis-postgres-backup:latest
+```
+
+Run the long-lived backup loop:
+
+```bash
+docker run --rm \
+  --env-file /path/to/upstream/tapis-postgres-backup/.env \
+  -e TAPIS_POSTGRES_BACKUP_MODE=backup-loop \
+  -e TAPIS_POSTGRES_BACKUP_INTERVAL_SECONDS=86400 \
+  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
+  tapis-postgres-backup:latest
+```
+
+Run a restore:
+
+```bash
+docker run --rm \
+  --env-file /path/to/upstream/tapis-postgres-backup/.env \
+  -v /tmp/upstream-postgres-backups:/tmp/upstream-postgres-backups \
+  tapis-postgres-backup:latest \
+  python runner.py --mode restore -- --pod-id fluxpostgres --backup-date 2026-04-10 --target-pod-id fluxrestorepostgres
+```
+
+Relevant image environment variables:
+
+- `TAPIS_BASE_URL`
+- `TAPIS_TENANT_ID`
+- `TAPIS_SERVICE_USERNAME`
+- `TAPIS_SERVICE_PASSWORD`
+- `TAPIS_BACKUP_SYSTEM_ID`
+- `TAPIS_BACKUP_ROOT_PATH`
+- `TAPIS_BACKUP_RETENTION_DAYS`
+- `TAPIS_BACKUP_STAGING_DIR`
+- `TAPIS_BACKUP_TIMEOUT_SECONDS`
+- `TAPIS_POSTGRES_BACKUP_MODE`
+- `TAPIS_POSTGRES_BACKUP_INTERVAL_SECONDS`
+- `TAPIS_POSTGRES_BACKUP_RUN_IMMEDIATELY`
+- `TAPIS_POSTGRES_BACKUP_LOG_LEVEL`
 
 ## Initial Setup
 

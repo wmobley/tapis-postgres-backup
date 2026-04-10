@@ -18,8 +18,8 @@ from urllib.parse import quote
 import psycopg
 import requests
 
-from app.core.config import Settings, get_settings
-from app.tapis.client import TapisAuthClient
+from config import Settings, get_settings
+from tapis_auth import TapisAuthClient
 
 logger = logging.getLogger(__name__)
 

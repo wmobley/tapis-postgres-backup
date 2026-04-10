@@ -4,24 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import subprocess
-import sys
 import tempfile
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-TOOLS_ROOT = Path(__file__).resolve().parent
-UPSTREAM_DOCKER_PODS_ROOT = TOOLS_ROOT.parent / "upstream-docker-pods"
-if str(TOOLS_ROOT) not in sys.path:
-    sys.path.insert(0, str(TOOLS_ROOT))
-if str(UPSTREAM_DOCKER_PODS_ROOT) not in sys.path:
-    sys.path.insert(0, str(UPSTREAM_DOCKER_PODS_ROOT))
-
 from backup import RestoreManager, TapisBackupClient, resolve_tapis_token
-from app.core.config import get_settings
-from app.services.pods_service import PodsService
+from config import get_settings
+from pods import PodsService
 
 
 def build_postgres_payload(
@@ -161,7 +154,7 @@ def main() -> int:
 
         target_host = f"{target_pod_id}.pods.tacc.tapis.io"
         if not args.reuse_existing_pod:
-            pods_service = PodsService(token_override=token)
+            pods_service = PodsService(token=token, settings=settings)
             pods_service.create_volume(
                 volume_id=target_volume_id,
                 description=f"Volume for {target_pod_id.removesuffix('postgres')}",

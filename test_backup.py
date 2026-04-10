@@ -3,11 +3,8 @@ from pathlib import Path
 import sys
 
 TOOLS_ROOT = Path(__file__).resolve().parent
-UPSTREAM_DOCKER_PODS_ROOT = TOOLS_ROOT.parent / "upstream-docker-pods"
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
-if str(UPSTREAM_DOCKER_PODS_ROOT) not in sys.path:
-    sys.path.insert(0, str(UPSTREAM_DOCKER_PODS_ROOT))
 
 from backup import (
     POSTGRES_DATA_MOUNT,
