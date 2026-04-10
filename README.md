@@ -134,6 +134,41 @@ Relevant image environment variables:
 - `TAPIS_POSTGRES_BACKUP_RUN_IMMEDIATELY`
 - `TAPIS_POSTGRES_BACKUP_LOG_LEVEL`
 
+The image installs PostgreSQL 17 client tools so `pg_dump` and `pg_restore` match the current Upstream Postgres server major version.
+
+## One-Shot Actor Test
+
+Use `test_actor_once.py` to validate that the published image works as a Tapis Actor before enabling cron.
+
+Additional `.env` values for the actor smoke test:
+
+```env
+ACTOR_TEST_TOKEN=YOUR_OWNER_OR_EXECUTOR_TOKEN
+ACTOR_TEST_IMAGE=ghcr.io/YOUR_ORG/YOUR_IMAGE:latest
+ACTOR_TEST_BASE_URL=https://portals.tapis.io
+ACTOR_TEST_TIMEOUT_SECONDS=600
+ACTOR_TEST_NAME_PREFIX=tapis-postgres-backup-smoke
+ACTOR_TEST_CLEANUP=true
+```
+
+Run it:
+
+```bash
+cd /path/to/upstream/tapis-postgres-backup
+.venv/bin/python test_actor_once.py
+```
+
+The script will:
+
+- create a temporary actor from `ACTOR_TEST_IMAGE`
+- wait for the actor to become `READY`
+- send one manual execution message
+- poll the execution until completion or failure
+- print execution details and logs
+- delete the actor by default when the test finishes
+
+Set `ACTOR_TEST_CLEANUP=false` if you want to keep the actor around for debugging after the run.
+
 ## Initial Setup
 
 ### 1. Create the backup directory on the Tapis Files system
@@ -332,5 +367,6 @@ Safe operational validation:
 ## Security Notes
 
 - New `manifest.json` files do not store `db_user` or `db_password`.
+- Backup JSON summaries and actor logs no longer print `db_user` or `db_password`.
 - Restore resolves credentials from live Tapis pod metadata instead of trusting backup metadata.
 - Older backups created before this change may still contain plaintext credentials in `manifest.json`. Remove or replace those older manifests if they are still present in Tapis Files.

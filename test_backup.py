@@ -15,6 +15,7 @@ from backup import (
     parse_backup_date_from_path,
     PostgresPodTarget,
     scrub_target_for_manifest,
+    scrub_target_for_output,
     select_retention_prune_candidates,
 )
 
@@ -126,3 +127,23 @@ def test_scrub_target_for_manifest_removes_credentials():
     assert manifest_pod["db_name"] == "weather"
     assert "db_user" not in manifest_pod
     assert "db_password" not in manifest_pod
+
+
+def test_scrub_target_for_output_removes_credentials():
+    target = PostgresPodTarget(
+        pod_id="weatherpostgres",
+        host="weatherpostgres.pods.tacc.tapis.io",
+        port=443,
+        db_name="weather",
+        db_user="weather_user",
+        db_password="super-secret",
+        volume_id="weathervolume",
+        description=UPSTREAM_POSTGRES_DESCRIPTION,
+    )
+
+    output_pod = scrub_target_for_output(target)
+
+    assert output_pod["pod_id"] == "weatherpostgres"
+    assert output_pod["db_name"] == "weather"
+    assert "db_user" not in output_pod
+    assert "db_password" not in output_pod

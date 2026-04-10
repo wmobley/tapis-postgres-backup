@@ -201,6 +201,10 @@ def scrub_target_for_manifest(target: PostgresPodTarget) -> dict[str, Any]:
     }
 
 
+def scrub_target_for_output(target: PostgresPodTarget) -> dict[str, Any]:
+    return scrub_target_for_manifest(target)
+
+
 def parse_backup_date_from_path(path: str) -> date | None:
     match = re.search(r"/(\d{4})/(\d{2})/(\d{2})/?$", path)
     if not match:
@@ -568,7 +572,7 @@ class BackupManager:
         summary = {
             "backup_timestamp": backup_time.isoformat(),
             "system_id": self.settings.TAPIS_BACKUP_SYSTEM_ID,
-            "targets": [asdict(target) for target in targets],
+            "targets": [scrub_target_for_output(target) for target in targets],
             "results": [asdict(result) for result in results],
         }
         inventory_path = build_inventory_remote_path(
